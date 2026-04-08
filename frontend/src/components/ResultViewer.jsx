@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, ZoomIn, Download, Layers, Eye, ChevronLeft, ChevronRight, GitCompare } from 'lucide-react';
 import OverlayViewer from './OverlayViewer';
 
+const API_BASE_URL = 'http://localhost:8000';
+
 const ResultViewer = ({ result, onClose }) => {
   const [activeView, setActiveView] = useState('all');
   const [zoomedImage, setZoomedImage] = useState(null);
-  const [sliderPosition, setSliderPosition] = useState(50);
-  const [showSlider, setShowSlider] = useState(false);
 
   // Demo data - replace with actual API response
   const images = {
@@ -24,6 +24,75 @@ const ResultViewer = ({ result, onClose }) => {
     { id: 'mask', label: 'Change Mask', icon: Eye },
     { id: 'compare', label: 'Compare', icon: ChevronLeft },
   ];
+
+  const handleDownload = async () => {
+    try {
+      // Create a zip file or download individual files
+      const response = await fetch(`${API_BASE_URL}/download-results`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          t1Image: images.t1,
+          t2Image: images.t2,
+          maskImage: images.mask,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `building-change-analysis-${new Date().toISOString().split('T')[0]}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        console.error('Download failed');
+        // Fallback: download current view as image
+        downloadCurrentView();
+      }
+    } catch (error) {
+      console.error('Download error:', error);
+      // Fallback: download current view as image
+      downloadCurrentView();
+    }
+  };
+
+  const downloadCurrentView = () => {
+    // Fallback: download the current active view as image
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Find the current image being displayed
+    let currentImageSrc = images.t1; // default
+    if (activeView === 't2') currentImageSrc = images.t2;
+    else if (activeView === 'mask') currentImageSrc = images.mask;
+    
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      
+      canvas.toBlob((blob) => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `building-change-${activeView}-${new Date().toISOString().split('T')[0]}.png`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      });
+    };
+    img.src = currentImageSrc;
+  };
 
   return (
     <motion.div
@@ -52,10 +121,7 @@ const ResultViewer = ({ result, onClose }) => {
                     key={option.id}
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
-                    onClick={() => {
-                      setActiveView(option.id);
-                      setShowSlider(option.id === 'compare');
-                    }}
+                    onClick={() => setActiveView(option.id)}
                     className={`
                       flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium
                       transition-all duration-200
@@ -76,6 +142,7 @@ const ResultViewer = ({ result, onClose }) => {
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
+                onClick={handleDownload}
                 className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors"
               >
                 <Download className="w-4 h-4" />
@@ -182,8 +249,6 @@ const ResultViewer = ({ result, onClose }) => {
               key="compare"
               t1Image={images.t1}
               t2Image={images.t2}
-              sliderPosition={sliderPosition}
-              setSliderPosition={setSliderPosition}
             />
           )}
         </AnimatePresence>
@@ -195,10 +260,10 @@ const ResultViewer = ({ result, onClose }) => {
           transition={{ delay: 0.3 }}
           className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4"
         >
-          <StatCard label="Buildings Detected" value={result?.stats?.buildingsDetected || '-'} color="blue" />
-          <StatCard label="Changes Found" value={`${result?.stats?.changesFound || '-'}%`} color="green" />
-          <StatCard label="Confidence Score" value={`${result?.stats?.confidenceScore || '-'}%`} color="purple" />
-          <StatCard label="Processing Time" value={`${result?.stats?.processingTime || '-'}s`} color="pink" />
+          <StatCard label="Buildings Detected" value={result?.stats?.buildingsDetected ?? '-'} color="blue" />
+          <StatCard label="Changes Found" value={`${result?.stats?.changesFound ?? '-'}%`} color="green" />
+          <StatCard label="Confidence Score" value={`${result?.stats?.confidenceScore ?? '-'}%`} color="purple" />
+          <StatCard label="Processing Time" value={`${result?.stats?.processingTime ?? '-'}s`} color="pink" />
         </motion.div>
       </div>
 
@@ -316,72 +381,50 @@ const OverlayView = ({ t1Image, maskImage, onZoom, stats }) => (
 );
 
 // Compare View Component
-const CompareView = ({ t1Image, t2Image, sliderPosition, setSliderPosition }) => {
-  const handleSliderChange = (e) => {
-    setSliderPosition(e.target.value);
-  };
-
+const CompareView = ({ t1Image, t2Image }) => {
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="max-w-4xl mx-auto"
+      className="max-w-6xl mx-auto"
     >
       <div className="rounded-2xl overflow-hidden border-2 border-blue-500/30">
-        <div className="p-4 bg-gray-800/50 border-b border-white/10 flex items-center justify-between">
+        <div className="p-4 bg-gray-800/50 border-b border-white/10">
           <h3 className="font-semibold text-white">Before / After Comparison</h3>
-          <div className="flex items-center space-x-2 text-sm text-gray-400">
-            <span>Drag slider to compare</span>
-          </div>
         </div>
-        <div className="relative h-[60vh] overflow-hidden">
-          {/* T2 Image (Background) */}
-          <img
-            src={t2Image}
-            alt="After"
-            className="absolute inset-0 w-full h-full object-contain bg-black/30"
-          />
-          
-          {/* T1 Image (Clipped) */}
-          <div
-            className="absolute inset-0 overflow-hidden"
-            style={{ width: `${sliderPosition}%` }}
-          >
-            <img
-              src={t1Image}
-              alt="Before"
-              className="absolute inset-0 w-full h-full object-contain bg-black/30"
-              style={{ width: `${100 / (sliderPosition / 100)}%` }}
-            />
-          </div>
-
-          {/* Slider handle */}
-          <div
-            className="absolute top-0 bottom-0 w-1 bg-white cursor-ew-resize shadow-lg"
-            style={{ left: `${sliderPosition}%` }}
-          >
-            <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-white rounded-full shadow-lg flex items-center justify-center">
-              <ChevronLeft className="w-4 h-4 text-gray-800 -mr-1" />
-              <ChevronRight className="w-4 h-4 text-gray-800 -ml-1" />
+        <div className="grid grid-cols-2 gap-0 bg-black/30">
+          {/* T1 Image (Before) */}
+          <div className="flex items-center justify-center p-2">
+            <div className="w-full flex flex-col items-center">
+              <img
+                src={t1Image}
+                alt="Before"
+                className="w-full h-auto object-contain max-h-[500px]"
+              />
             </div>
           </div>
 
-          {/* Slider input */}
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={sliderPosition}
-            onChange={handleSliderChange}
-            className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize"
-          />
+          {/* T2 Image (After) */}
+          <div className="flex items-center justify-center p-2 border-l border-white/10">
+            <div className="w-full flex flex-col items-center">
+              <img
+                src={t2Image}
+                alt="After"
+                className="w-full h-auto object-contain max-h-[500px]"
+              />
+            </div>
+          </div>
         </div>
         
         {/* Labels */}
-        <div className="p-4 bg-gray-800/50 flex justify-between text-sm">
-          <span className="text-blue-400 font-medium">T1 (Before)</span>
-          <span className="text-purple-400 font-medium">T2 (After)</span>
+        <div className="grid grid-cols-2 gap-0 bg-gray-800/50 border-t border-white/10">
+          <div className="p-4 border-r border-white/10 text-center">
+            <span className="text-blue-400 font-medium">T1 (Before)</span>
+          </div>
+          <div className="p-4 text-center">
+            <span className="text-purple-400 font-medium">T2 (After)</span>
+          </div>
         </div>
       </div>
     </motion.div>

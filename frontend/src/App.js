@@ -36,6 +36,92 @@ function App() {
     }
   }, [isLoading]);
 
+  const loadImage = (src) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = (err) => reject(err);
+    img.src = src;
+  });
+
+  const computeMaskStats = async (maskUrl) => {
+    const img = await loadImage(maskUrl);
+    const width = img.width;
+    const height = img.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const pixels = imageData.data;
+    const whiteMask = new Uint8Array(width * height);
+    let whitePixelCount = 0;
+
+    for (let i = 0, j = 0; i < pixels.length; i += 4, j += 1) {
+      const r = pixels[i];
+      const g = pixels[i + 1];
+      const b = pixels[i + 2];
+      const a = pixels[i + 3];
+      const brightness = (r + g + b) / 3;
+      const isWhite = a > 128 && brightness > 200;
+      if (isWhite) {
+        whiteMask[j] = 1;
+        whitePixelCount += 1;
+      }
+    }
+
+    const totalPixels = width * height;
+    const changesFound = totalPixels > 0 ? Math.round((whitePixelCount / totalPixels) * 100) : 0;
+
+    const visited = new Uint8Array(width * height);
+    let buildingsDetected = 0;
+    const stack = [];
+    const neighborOffsets = [-1, 1, -width, width, -width - 1, -width + 1, width - 1, width + 1];
+
+    for (let idx = 0; idx < whiteMask.length; idx += 1) {
+      if (whiteMask[idx] !== 1 || visited[idx]) continue;
+      let regionSize = 0;
+      stack.push(idx);
+      visited[idx] = 1;
+
+      while (stack.length) {
+        const current = stack.pop();
+        regionSize += 1;
+
+        const x = current % width;
+        const y = Math.floor(current / width);
+
+        for (const offset of neighborOffsets) {
+          const neighbor = current + offset;
+          if (neighbor < 0 || neighbor >= whiteMask.length) continue;
+          const nx = neighbor % width;
+          const ny = Math.floor(neighbor / width);
+          if (Math.abs(nx - x) > 1 || Math.abs(ny - y) > 1) continue;
+          if (whiteMask[neighbor] === 1 && !visited[neighbor]) {
+            visited[neighbor] = 1;
+            stack.push(neighbor);
+          }
+        }
+      }
+
+      if (regionSize >= 16) {
+        buildingsDetected += 1;
+      }
+    }
+
+    const normalizedArea = whitePixelCount / Math.max(totalPixels, 1);
+    const confidenceScore = whitePixelCount === 0
+      ? 40
+      : Math.min(100, Math.max(50, Math.round(80 - Math.abs(0.12 - normalizedArea) * 100 + Math.min(10, buildingsDetected))));
+
+    return {
+      buildingsDetected,
+      changesFound,
+      confidenceScore,
+    };
+  };
+
   const handleDetect = async () => {
     if (!t1File || !t2File) return;
 
@@ -64,22 +150,27 @@ function App() {
         throw new Error(data.error);
       }
 
+      const maskUrl = `${API_BASE_URL}/${data.mask}`;
+      const fallbackStats = await computeMaskStats(maskUrl);
+
       // Calculate processing time
       const endTime = performance.now();
       const processingTime = ((endTime - startTime) / 1000).toFixed(1);
       
-      // Use backend stats if available, otherwise calculate fallback
       const backendStats = data.stats || {};
+      const buildingsDetected = backendStats.buildingsDetected ?? fallbackStats.buildingsDetected;
+      const changesFound = backendStats.changesFound ?? fallbackStats.changesFound;
+      const confidenceScore = backendStats.confidenceScore ?? fallbackStats.confidenceScore;
       
       setResult({
         t1Image: `${API_BASE_URL}/${data.before_image}`,
         t2Image: `${API_BASE_URL}/${data.after_image}`,
-        changeMask: `${API_BASE_URL}/${data.mask}`,
+        changeMask: maskUrl,
         stats: {
-          buildingsDetected: backendStats.buildingsDetected ?? '-',
-          changesFound: backendStats.changesFound ?? '-',
-          confidenceScore: backendStats.confidenceScore ?? '-',
-          processingTime: processingTime,
+          buildingsDetected,
+          changesFound,
+          confidenceScore,
+          processingTime,
         },
       });
 

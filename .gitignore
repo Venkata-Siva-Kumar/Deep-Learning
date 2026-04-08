@@ -2,12 +2,5 @@
 __pycache__/
 *.pyc
 
-# Model weights
-*.pth
-
-# Uploads and outputs
-backend/uploads/
-backend/outputs/
-
 # Node
 node_modules/
