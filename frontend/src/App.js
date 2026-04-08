@@ -6,7 +6,8 @@ import DetectButton from './components/DetectButton';
 import ResultViewer from './components/ResultViewer';
 import { Satellite, Layers, Zap, AlertCircle } from 'lucide-react';
 
-const API_BASE_URL = 'http://localhost:8000';
+//const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'https://deep-learning-8lhd.onrender.com';
 
 function App() {
   const [t1File, setT1File] = useState(null);
